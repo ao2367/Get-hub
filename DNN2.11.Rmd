@@ -1,0 +1,765 @@
+---
+title: "DNN2.11"
+author: "Akwasi Oppong"
+date: "2026-11-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+---
+title: "DNN2.10"
+author: "Akwasi Oppong"
+date: "2026-11-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+draw_network_weights <- function() {
+  op <- par(mar = c(0, 0, 0, 0)); on.exit(par(op))
+  plot(NA, xlim = c(0, 680), ylim = c(550, 0), asp = 1,
+       axes = FALSE, xlab = "", ylab = "")
+
+  col_f <- "#9FE1CB"; col_g <- "#FAC775"; col_y <- "#F5C4B3"
+  line_col <- adjustcolor("gray40", 0.5)
+
+  xin <- 50; xh <- c(170, 290, 410); xo <- 520; xy <- 632
+  yF  <- c(65, 110, 175); yG <- c(325, 370, 435); yin <- c(65, 120, 175)
+
+  conn <- function(x1, ys1, x2, ys2, r1, r2)
+    for (a in ys1) for (b in ys2)
+      segments(x1 + r1, a, x2 - r2, b, col = line_col, lwd = 0.7)
+  node <- function(x, y, r, bg)
+    symbols(x, y, circles = rep(r, length(x)), inches = FALSE,
+            add = TRUE, bg = bg, fg = "gray30")
+  wlabel <- function(x, y, W, b, cnt) {
+    text(x, y,      W,   font = 2, cex = 0.75)
+    text(x, y + 16, b,              cex = 0.75)
+    text(x, y + 32, cnt,            cex = 0.75)
+  }
+
+  # ---- connections ----
+  conn(xin,   yin, xh[1], yF, 13, 12)
+  conn(xh[1], yF,  xh[2], yF, 12, 12)
+  conn(xh[2], yF,  xh[3], yF, 12, 12)
+  conn(xh[3], yF,  xo,    120, 12, 16)
+
+  conn(xin,   380, xh[1], yG, 13, 12)      # time branch: one hidden layer
+  conn(xh[1], yG,  xo,    380, 12, 16)
+
+  segments(xo + 16, 120, xy - 16, 242, col = line_col, lwd = 0.7)
+  segments(xo + 16, 380, xy - 16, 258, col = line_col, lwd = 0.7)
+
+  # ---- nodes ----
+  node(rep(xin, 3), yin, 13, col_f)
+  text(xin, yin, c("x1", "x2", "x3"), font = 2, cex = 0.8)
+  node(xin, 380, 13, col_g); text(xin, 380, "t", font = 2, cex = 0.8)
+
+  for (k in 1:3) {
+    node(rep(xh[k], 3), yF, 12, col_f)
+    points(rep(xh[k], 3), c(133, 142, 151), pch = 16, cex = 0.5, col = "gray50")
+  }
+  node(rep(xh[1], 3), yG, 12, col_g)
+  points(rep(xh[1], 3), c(393, 402, 411), pch = 16, cex = 0.5, col = "gray50")
+
+  node(xo, 120, 16, col_f); text(xo, 120, expression(hat(f)), cex = 0.9)
+  node(xo, 380, 16, col_g); text(xo, 380, expression(hat(g)), cex = 0.9)
+  node(xy, 250, 16, col_y); text(xy, 250, expression(hat(y)), cex = 0.9)
+
+  # ---- covariate branch ----
+  text(340, 20, "Covariate branch f(x1, x2, x3): 801 parameters", font = 2, cex = 0.8)
+  text(c(xin, xh, xo), 44,
+       c("Inputs", "Hidden 1: 32", "Hidden 2: 16", "Hidden 3: 8", "Output"), cex = 0.7)
+  wlabel(110, 212, "Wf1: 3x32",  "bf1: 32", "128 params")
+  wlabel(230, 212, "Wf2: 32x16", "bf2: 16", "528 params")
+  wlabel(350, 212, "Wf3: 16x8",  "bf3: 8",  "136 params")
+  wlabel(463, 212, "Wf4: 8x1",   "bf4: 1",  "9 params")
+
+  # ---- time branch ----
+  text(340, 280, "Time branch g(t): 61 parameters", font = 2, cex = 0.8)
+  text(c(xin, xh[1], xo), 304, c("Input", "Hidden: 20", "Output"), cex = 0.7)
+  text(xh[1], 455, cex = 0.7)
+  wlabel(110, 472, "Wg1: 1x20", "bg1: 20", "40 params")
+  wlabel(345, 472, "Wg2: 20x1", "bg2: 1",  "21 params")
+
+  text(340, 535,
+       expression(hat(y) == hat(g)(t) + hat(f)(x) ~ ":  801 + 61 = 862 parameters"),
+       cex = 0.75)
+}
+
+draw_network_weights()
+```
+
+```{r}
+# Reproducibility
+set.seed(123)
+
+# Number of observations
+n <- 1000
+
+# Time
+t <- (1:n)/n
+
+# ------------------------------------------------------------
+# Changepoints
+# ------------------------------------------------------------
+
+tau1 <- 250
+tau2 <- 500
+tau3 <- 750
+
+# ------------------------------------------------------------
+# Parameters for g(t)
+# ------------------------------------------------------------
+
+alpha <- 10
+beta0 <- 0
+beta1 <- -0.1
+beta2 <- 0.2
+beta3 <- -0.15
+
+# ------------------------------------------------------------
+# Segmented temporal function g(t)
+# ------------------------------------------------------------
+
+g <- alpha +
+     beta0 * n * t +
+     beta1 * n * pmax(t - tau1/n, 0) +
+     beta2 * n * pmax(t - tau2/n, 0) +
+     beta3 * n * pmax(t - tau3/n, 0)
+
+# ------------------------------------------------------------
+# Covariates
+# ------------------------------------------------------------
+
+x1 <- runif(n, 0, 1)
+x2 <- runif(n, 0, 1)
+x3 <- runif(n, 0, 1)
+
+# ------------------------------------------------------------
+# Nonlinear covariate effect f(x1,x2,x3)
+# ------------------------------------------------------------
+
+# Rastrigin nonlinear function
+f1 <- 0.05*(30 +
+     (x1^2 - 10 * cos(2 * pi * x1)) +
+     (x2^2 - 10 * cos(2 * pi * x2)) +
+     (x3^2 - 10 * cos(2 * pi * x3)))
+
+f <- 10*(f1-1.5)
+# ------------------------------------------------------------
+# Random error
+# ------------------------------------------------------------
+
+epsilon <- rnorm(n,mean = 0,sd = 1)
+
+# ------------------------------------------------------------
+# Full response
+# y_t = g(t) + f(x1,x2,x3) + epsilon_t
+# ------------------------------------------------------------
+
+y <- g + f + epsilon
+```
+
+```{r}
+library(keras3)
+
+# Standardize the response
+y_mean <- mean(y)
+y_sd   <- sd(y)
+Y <- matrix((y - y_mean) / y_sd, ncol = 1)
+
+# Inputs for the two branches
+X_cov  <- cbind(x1, x2, x3)          # already in [0, 1]
+X_time <- matrix(t, ncol = 1)        # already in (0, 1]
+```
+
+```{r}
+lambda         <- 0.0001    # lasso tuning parameter
+dropout_rate   <- 0.05     # dropout for the f branch
+dropout_rate_g <- 0     # dropout for the g branch (was 0.40, too heavy for 10 neurons)
+```
+
+```{r}
+set.seed(123)
+keras3::set_random_seed(123)
+
+input_x <- layer_input(shape = 3, name = "covariates")   # x1, x2, x3
+input_t <- layer_input(shape = 1, name = "time")         # t
+
+# ---- Branch for f(x1, x2, x3): unchanged ----
+branch_f <- input_x |>
+  layer_dense(units = 32, activation = "relu") |>
+  layer_dropout(rate = dropout_rate) |>
+  layer_dense(units = 16, activation = "relu") |>
+  layer_dropout(rate = dropout_rate) |>
+  layer_dense(units = 8,  activation = "relu") |>
+  layer_dense(units = 1,  activation = "linear")
+
+# ---- Branch for g(t): 1 hidden layer, 10 neurons, kinks spread over (0, 1) ----
+branch_g <- input_t |>
+  layer_dense(units = 20, activation = "relu",
+              kernel_initializer = initializer_random_uniform(minval = 1,  maxval = 2),
+              bias_initializer   = initializer_random_uniform(minval = -1, maxval = 0)) |>
+  layer_dropout(rate = dropout_rate_g) |>
+  layer_dense(units = 1, activation = "linear")
+
+output <- layer_add(list(branch_g, branch_f))
+model  <- keras_model(inputs = list(input_x, input_t), outputs = output)
+```
+
+```{r}
+# p = total number of parameters (weights + biases)
+p <- count_params(model)
+
+lasso_loss <- function(y_true, y_pred) {
+  # (1/n) * sum (y - y_hat)^2
+  mse_part <- op_mean(op_square(y_true - y_pred))
+
+  # sum |theta_j| over every weight and bias
+  abs_sum <- Reduce(`+`, lapply(model$trainable_variables,
+                                function(w) op_sum(op_abs(w))))
+
+  # MSE + lambda * (1/p) * sum |theta_j|
+  mse_part + lambda * abs_sum / p
+}
+```
+
+```{r}
+model |> compile(
+  optimizer = optimizer_adam(learning_rate = 0.01),
+  loss = lasso_loss,
+  metrics = list("mean_squared_error")    # plain MSE reported separately
+)
+```
+
+
+```{r}
+set.seed(123)
+history <- model |> fit(
+  x = list(X_cov, X_time),
+  y = Y,
+  epochs = 500,
+  batch_size = 32,
+  validation_split = 0,
+  verbose = 1
+)
+```
+
+```{r}
+y_hat <- as.vector(
+  predict(model, list(X_cov, X_time), verbose = 0)
+) * y_sd + y_mean
+```
+
+```{r}
+plot(
+  t, y_hat, type = "l", lwd = 2.5, col = "black",
+  xlab = "Time", ylab = expression(hat(y)),
+  main = expression("Predicted " * hat(y) * " (Lasso-type loss + Dropout)")
+)
+```
+
+```{r}
+plot(
+  t, y_trend, type = "l", lwd = 2.5, col = "black",
+  xlab = "Time", ylab = expression(hat(y)),
+  main = expression("Predicted " * hat(y) * " (Lasso-type loss + Dropout)")
+)
+```
+```{r}
+plot(
+  t, y, type = "l", lwd = 2.5, col = "black",
+  xlab = "Time", ylab = expression(hat(y)),
+  main = expression("Predicted " * hat(y) * " (Lasso-type loss + Dropout)")
+)
+```
+```{r}
+plot(
+  t, f, type = "l", lwd = 2.5, col = "black",
+  xlab = "Time", ylab = expression(hat(y)),
+  main = expression("Predicted " * hat(y) * " (Lasso-type loss + Dropout)")
+)
+```
+
+
+```{r}
+plot(
+  y_trend, y, type = "l", lwd = 2.5, col = "black",
+  xlab = "Time", ylab = expression(hat(y)),
+  main = expression("Predicted " * hat(y) * " (Lasso-type loss + Dropout)")
+)
+```
+```{r}
+library(ggplot2)
+plot(
+  t, y, type = "l", lwd = 2.5, col = "black",
+  xlab = "Time", ylab = expression(hat(y)),
+  main = expression("Predicted " * hat(y) * " (Lasso-type loss + Dropout)")
+)
+lines(t,y_trend, col="blue")
+lines(t,f, col="red")
+```
+```{r}
+fn <- 10*(f-1.5)
+```
+
+```{r}
+plot(
+  t, fn, type = "l", lwd = 2.5, col = "black",
+  xlab = "Time", ylab = expression(hat(y)),
+  main = expression("Predicted " * hat(y) * " (Lasso-type loss + Dropout)")
+)
+```
+
+
+```{r}
+# Thin, semi-transparent lines
+plot(t, y, type = "l", lwd = 0.8, col = adjustcolor("red", 0.5),
+     xlab = "Time", ylab = "y",
+     main = "Observed y vs Predicted y_hat")
+lines(t, y_hat, lwd = 1, col = adjustcolor("black", 0.7))
+
+legend(
+  "topright",
+  legend = c("Observed y", expression(hat(y))),
+  col = c(adjustcolor("red", 0.5), adjustcolor("black", 0.7)),
+  lty = 1,
+  lwd = c(0.8, 1),
+  cex = 0.8,
+  bty = "n"
+)
+```
+```{r}
+# Residuals: observed minus predicted
+plot(t, y - y_hat, type = "l", col = "gray40",
+     xlab = "Time", ylab = "Residual", main = "Residuals over time")
+abline(h = 0, col = "red", lty = 2)
+```
+```{r}
+mse_observed <- mean((y - y_hat)^2)
+mse_truth    <- mean(((g + f) - y_hat)^2)
+
+mse_observed    # includes noise, so it should be near 1 at best
+mse_truth       # error against the noise-free signal
+
+```
+
+
+
+```{r}
+# These share the trained weights with `model`, so nothing is retrained
+model_f <- keras_model(inputs = input_x, outputs = branch_f)   # f(x1, x2, x3) branch
+model_g <- keras_model(inputs = input_t, outputs = branch_g)   # g(t) branch
+```
+
+
+```{r}
+wf <- get_weights(model_f)
+wg <- get_weights(model_g)
+
+# ---- Covariate branch f(x1, x2, x3): unchanged ----
+Wf1 <- wf[[1]]; bf1 <- wf[[2]]     # 3 x 32 ; 32
+Wf2 <- wf[[3]]; bf2 <- wf[[4]]     # 32 x 16 ; 16
+Wf3 <- wf[[5]]; bf3 <- wf[[6]]     # 16 x 8 ; 8
+Wf4 <- wf[[7]]; bf4 <- wf[[8]]     # 8 x 1 ; 1
+
+# ---- Time branch g(t): one hidden layer ----
+Wg1 <- wg[[1]]; bg1 <- wg[[2]]     # 1 x 10 ; 10
+Wg2 <- wg[[3]]; bg2 <- wg[[4]]     # 10 x 1 ; 1
+```
+
+```{r}
+relu <- function(z) pmax(z, 0)
+add_bias <- function(M, b) M + matrix(as.vector(b), nrow(M), length(b), byrow = TRUE)
+
+a1 <- relu(add_bias(X_time %*% Wg1, bg1))
+g_hat_manual <- as.vector(a1 %*% Wg2 + bg2[1])
+
+g_hat_keras <- as.vector(predict(model_g, X_time, verbose = 0))
+
+max(abs(g_hat_manual - g_hat_keras))     # should be about 0
+```
+```{r}
+set.seed(123)
+tg   <- seq(0, 1, length.out = 1000)       # fine grid in the original t
+tg_s <- tg                                  # the model sees t directly, so no transformation
+G    <- length(tg)
+
+rep_b <- function(b, G) matrix(as.vector(b), nrow = G, ncol = length(b), byrow = TRUE)   # repeats a bias vector down the rows of a matrix
+```
+
+```{r}
+# Layer 1: the only hidden layer
+pre1 <- outer(tg_s, as.vector(Wg1)) + rep_b(bg1, G)       # G x 10, input before the ReLU
+a1   <- pmax(pre1, 0)                                      # output after the ReLU
+d1   <- (pre1 > 0) * matrix(as.vector(Wg1), G, 20, byrow = TRUE)   # slope of each neuron
+
+# Output of the branch and its exact slope
+g_curve <- as.vector(a1 %*% Wg2 + bg2[1])
+slope   <- as.vector(d1 %*% Wg2) * y_sd      # * y_sd puts the slope on the scale of y
+```
+
+```{r}
+h  <- 0.04                               # The window width in time
+k  <- round(h / (tg[2] - tg[1]))         # The number of grid points that fit in the window
+cs <- c(0, cumsum(slope))
+
+i      <- k:(G - k)
+after  <- (cs[i + k + 1] - cs[i + 1]) / k          # mean slope just after t
+before <- (cs[i + 1] - cs[i - k + 1]) / k          # mean slope just before t
+score  <- after - before                           # estimated slope change at t
+t_i    <- tg[i]
+```
+
+```{r}
+score_tbl <- data.frame(t = t_i, score = score)
+
+View(score_tbl)
+```
+
+```{r}
+truth <- data.frame(
+  tau_true  = c(tau1, tau2, tau3) / n,           # 0.25, 0.50, 0.75
+  jump_true = c(beta1, beta2, beta3) * n         # -100, +200, -150
+)
+```
+
+```{r}
+pick <- function(score, t_i, m = 3, min_gap = 0.15) {
+  s <- abs(score); chosen <- c()
+  for (j in 1:m) {
+    idx    <- which.max(s)
+    chosen <- c(chosen, idx)
+    s[abs(t_i - t_i[idx]) < min_gap] <- -Inf
+  }
+  sort(chosen)
+}
+
+sel  <- pick(score, t_i)
+est2 <- data.frame(tau_hat      = t_i[sel],
+                   slope_change = score[sel],
+                   index        = round(t_i[sel] * n))
+
+cbind(truth, est2)
+```
+
+```{r}
+par(mar = c(5, 4, 4, 2))
+
+plot(t_i, score, type = "l", col = "firebrick", lwd = 1.5,
+     xlab = "Time", ylab = "Slope change (after - before)",
+     main = "Changepoint Score and the 3 Estimated Changepoints")
+abline(h = 0, col = "gray60", lty = 2)
+
+abline(v = est2$tau_hat, col = "blue", lty = 2, lwd = 2)
+points(est2$tau_hat, est2$slope_change, pch = 19, col = "blue", cex = 1.2)
+text(est2$tau_hat, est2$slope_change, labels = sprintf("%.4f", est2$tau_hat),
+     pos = ifelse(est2$slope_change > 0, 3, 1), col = "blue", cex = 0.9)
+
+legend("topright",
+       legend = c("Score", "Estimated changepoint"),
+       col = c("firebrick", "blue"), lty = c(1, 2), lwd = c(1.5, 2),
+       cex = 0.8, bty = "n")
+```
+```{r}
+par(mar = c(5, 4, 4, 2))
+
+plot(t, y, type = "l", lwd = 0.8, col = adjustcolor("red", 0.5),
+     xlab = "Time", ylab = "y",
+     main = "Observed y, Predicted y_hat and Estimated Changepoints")
+lines(t, y_hat, lwd = 1, col = adjustcolor("black", 0.7))
+abline(v = est2$tau_hat, col = "blue", lty = 2, lwd = 2)
+
+legend("topright",
+       legend = c("Observed y", expression(hat(y)), "Estimated changepoint"),
+       col = c(adjustcolor("red", 0.5), adjustcolor("black", 0.7), "blue"),
+       lty = c(1, 1, 2), lwd = c(0.8, 1, 2), cex = 0.8, bty = "n")
+abline(v = c(0.25, 0.50, 0.75), col = "darkgreen", lty = 3, lwd = 2)
+
+legend("bottomleft",
+       legend = c("True changepoint"),
+       col = "darkgreen", lty = 3, lwd = 2, cex = 0.8, bty = "n")
+```
+```{r}
+plot(t_i, score, type = "l", col = "firebrick", lwd = 1.5,
+     xlab = "Time", ylab = "Slope change (after - before)",
+     main = "Changepoint Score over Time")
+abline(h = 0, col = "gray60", lty = 2)
+```
+```{r}
+pick_all <- function(score, t_i, m = 10, min_gap = 2*h) {
+  s <- abs(score); chosen <- c()
+  for (j in 1:m) {
+    if (max(s) <= 0) break                      # nothing left (flat or fully blocked out)
+    idx    <- which.max(s)
+    chosen <- c(chosen, idx)
+    s[abs(t_i - t_i[idx]) < min_gap] <- -Inf    # block out this peak's neighborhood
+  }
+  chosen                                        # biggest peak first
+}
+
+cand <- pick_all(score, t_i)
+
+data.frame(rank  = seq_along(cand),
+           tau   = round(t_i[cand], 7),
+           score = round(score[cand], 2))
+```
+
+```{r}
+plot(truth$tau_true, est2$tau_hat, pch = 19, cex = 2, col = "blue",
+     xlim = c(0, 1), ylim = c(0, 1),
+     xlab = "True changepoint", ylab = "Estimated changepoint",
+     main = "Estimated vs True Changepoint Location")
+abline(a = 0, b = 1, lty = 2, lwd = 2, col = "darkgreen")
+text(truth$tau_true, est2$tau_hat, paste0("τ", 1:3), pos = 3, cex = 0.9)
+
+legend("topleft", legend = c("Estimate", "Perfect agreement"),
+       col = c("blue", "darkgreen"), pch = c(19, NA), lty = c(NA, 2),
+       lwd = c(NA, 2), cex = 0.8, bty = "n")
+```
+
+```{r}
+# Each branch output is on the standardized scale, so multiply by y_sd
+f_hat <- as.vector(predict(model_f, X_cov,  verbose = 0)) * y_sd
+g_hat <- as.vector(predict(model_g, X_time, verbose = 0)) * y_sd
+
+# The two branches can trade a constant, so match each to the level of the truth
+f_hat <- f_hat - mean(f_hat) + mean(f)
+g_hat <- g_hat - mean(g_hat) + mean(g)
+```
+
+```{r}
+par(mfrow = c(1, 2), mar = c(5, 4, 4, 2))
+
+# f and f_hat against time
+plot(t, f, type = "l", col = "black", lwd = 1,
+     xlab = "Time", ylab = "f", main = expression("f and " * hat(f) * " vs Time"))
+lines(t, f_hat, col = "firebrick", lwd = 1)
+legend("topright", legend = c("f", expression(hat(f))),
+       col = c("black", "firebrick"), lty = 1, cex = 0.8, bty = "n")
+
+# f against f_hat with the 45-degree line
+plot(f, f_hat, pch = 19, cex = 0.5, col = adjustcolor("steelblue", 0.6),
+     xlab = "f", ylab = expression(hat(f)), main = expression("f vs " * hat(f)))
+abline(a = 0, b = 1, lty = 2, lwd = 2, col = "red")
+
+par(mfrow = c(1, 1))
+```
+
+```{r}
+par(mfrow = c(1, 2), mar = c(5, 4, 4, 2))
+
+# g and g_hat against time
+plot(t, g, type = "l", col = "gray50", lwd = 2,
+     xlab = "Time", ylab = "g", main = expression("g and " * hat(g) * " vs Time"))
+lines(t, g_hat, col = "firebrick", lwd = 2, lty = 2)
+legend("topright", legend = c("g", expression(hat(g))),
+       col = c("gray50", "firebrick"), lty = c(1, 2), lwd = 2, cex = 0.8, bty = "n")
+
+# g against g_hat with the 45-degree line
+plot(g, g_hat, pch = 19, cex = 0.5, col = adjustcolor("steelblue", 0.6),
+     xlab = "g", ylab = expression(hat(g)), main = expression("g vs " * hat(g)))
+abline(a = 0, b = 1, lty = 2, lwd = 2, col = "red")
+
+par(mfrow = c(1, 1))
+```
+```{r}
+y
+```
+```{r, warning=FALSE}
+library(changepoint)
+library(segmented)
+library(strucchange)
+library(genlasso)
+library(not)
+```
+
+
+```{r}
+y_trend <- g + epsilon                     # y with the covariate effect removed, used by every method
+truth_t <- c(tau1, tau2, tau3) / n         # 0.25, 0.50, 0.75
+
+merge_close <- function(idx, gap = 5) {    # merges neighboring indices into one location
+  if (length(idx) == 0) return(idx)
+  grp <- cumsum(c(1, diff(idx) > gap))
+  as.integer(round(tapply(idx, grp, mean)))
+}
+```
+
+```{r}
+cp_mine <- est2$tau_hat                    # your method, number of changepoints given (m = 3)
+
+cand <- pick_all(score, t_i)               # candidate peaks, biggest first
+bic  <- sapply(0:length(cand), function(k) {
+  if (k == 0) {
+    fit <- lm(y_trend ~ t)
+  } else {
+    H   <- sapply(t_i[cand[1:k]], function(c0) pmax(t - c0, 0))
+    fit <- lm(y_trend ~ t + H)
+  }
+  n * log(sum(residuals(fit)^2) / n) + (2 * k + 2) * log(n)
+})
+k_hat       <- which.min(bic) - 1
+cp_mine_bic <- sort(t_i[cand[seq_len(k_hat)]])     # your method, number chosen by BIC
+
+cp_mine; cp_mine_bic
+```
+
+# Segmented regression: Estimates breakpoints in a piecewise-linear trend directly, and selgmented() chooses the number by BIC
+```{r}
+fit0 <- lm(y_trend ~ t)
+sel_seg <- selgmented(fit0, seg.Z = ~t, Kmax = 6, type = "bic", msg = FALSE)
+
+cp_segmented <- if (inherits(sel_seg, "segmented")) sort(sel_seg$psi[, "Est."]) else numeric(0)
+cp_segmented
+```
+
+```{r}
+fit0 <- lm(y ~ t)
+sel_seg <- selgmented(fit0, seg.Z = ~t, Kmax = 6, type = "bic", msg = FALSE)
+
+cp_segmented <- if (inherits(sel_seg, "segmented")) sort(sel_seg$psi[, "Est."]) else numeric(0)
+cp_segmented
+```
+
+
+# Bai-Perron structural breaks: It fits a separate line in each segment, so it handles slope changes
+```{r}
+bp     <- breakpoints(y_trend ~ t, h = 0.1)
+bp_opt <- breakpoints(bp)                  # number of breaks chosen by BIC
+
+cp_bp <- if (all(is.na(bp_opt$breakpoints))) numeric(0) else t[bp_opt$breakpoints]
+cp_bp
+```
+```{r}
+bp     <- breakpoints(y ~ t, h = 0.1)
+bp_opt <- breakpoints(bp)                  # number of breaks chosen by BIC
+
+cp_bp <- if (all(is.na(bp_opt$breakpoints))) numeric(0) else t[bp_opt$breakpoints]
+cp_bp
+```
+
+
+# L1 trend filtering: Fits a piecewise-linear curve with a lasso penalty on the second differences, so its kinks are the changepoints.
+```{r}
+tf   <- trendfilter(y_trend, ord = 1)
+cvtf <- cv.trendfilter(tf)
+fit_tf <- as.vector(coef(tf, lambda = cvtf$lambda.1se)$beta)
+
+d2    <- abs(diff(fit_tf, differences = 2))
+kinks <- which(d2 > 1e-4 * max(d2)) + 1
+cp_tf <- t[merge_close(kinks)]
+cp_tf
+```
+
+```{r}
+tf   <- trendfilter(y, ord = 1)
+cvtf <- cv.trendfilter(tf)
+fit_tf <- as.vector(coef(tf, lambda = cvtf$lambda.1se)$beta)
+
+d2    <- abs(diff(fit_tf, differences = 2))
+kinks <- which(d2 > 1e-4 * max(d2)) + 1
+cp_tf <- t[merge_close(kinks)]
+cp_tf
+```
+
+
+# Narrowest-Over-Threshold: Designed for piecewise-linear signals and finds the number without being told it.
+```{r}
+set.seed(123)
+w      <- not(y_trend, contrast = "pcwsLinContMean")
+cp_not <- t[features(w)$cpt]
+cp_not
+```
+
+```{r}
+set.seed(123)
+w      <- not(y, contrast = "pcwsLinContMean")
+cp_not <- t[features(w)$cpt]
+cp_not
+```
+
+
+# PELT: It finds changes in the mean
+```{r}
+B   <- 20
+nb  <- n %/% B
+blk <- rep(1:nb, each = B)
+
+bs <- sapply(1:nb, function(b) {
+  i <- which(blk == b)
+  unname(coef(lm(y_trend[i] ~ t[i]))[2])
+})
+
+sig     <- mad(diff(bs)) / sqrt(2)
+pelt    <- cpt.mean(bs / sig, method = "PELT", penalty = "MBIC")
+cp_pelt <- t[cpts(pelt) * B]
+cp_pelt
+```
+
+```{r}
+B   <- 20
+nb  <- n %/% B
+blk <- rep(1:nb, each = B)
+
+bs <- sapply(1:nb, function(b) {
+  i <- which(blk == b)
+  unname(coef(lm(y[i] ~ t[i]))[2])
+})
+
+sig     <- mad(diff(bs)) / sqrt(2)
+pelt    <- cpt.mean(bs / sig, method = "PELT", penalty = "MBIC")
+cp_pelt <- t[cpts(pelt) * B]
+cp_pelt
+```
+
+
+```{r}
+res <- list(
+  "Mine (m = 3 given)"   = cp_mine,
+  "Mine (BIC count)"     = cp_mine_bic,
+  "Segmented"            = cp_segmented,
+  "Bai-Perron"           = cp_bp,
+  "Trend filtering"      = cp_tf,
+  "NOT"                  = cp_not,
+  "PELT (slope blocks)"  = cp_pelt
+)
+
+for (m in names(res)) {
+  cat(sprintf("%-22s", m), ":", if (length(res[[m]]) == 0) "none found" else round(res[[m]], 4), "\n")
+}
+cat(sprintf("%-22s", "True"), ":", truth_t, "\n")
+```
+
+
+
+```{r}
+par(mar = c(5, 12, 4, 2))
+K <- length(res)
+
+plot(NA, xlim = c(0, 1), ylim = c(0.5, K + 0.5), yaxt = "n",
+     xlab = "Time", ylab = "", main = "Estimated Changepoints by Method")
+axis(2, at = K:1, labels = names(res), las = 1)
+abline(v = truth_t, col = "darkgreen", lty = 3, lwd = 2)
+
+for (j in seq_along(res)) {
+  est <- res[[j]]
+  if (length(est) > 0) {
+    points(est, rep(K - j + 1, length(est)), pch = 19, cex = 1.5,
+           col = if (j <= 2) "firebrick" else "blue")
+    text(est, K - j + 1, sprintf("%.3f", est), pos = 3, cex = 0.7)
+  }
+}
+legend("bottomright", legend = c("True changepoint", "Mine", "Other methods"),
+       col = c("darkgreen", "firebrick", "blue"), lty = c(3, NA, NA),
+       pch = c(NA, 19, 19), lwd = c(2, NA, NA), cex = 0.8, bty = "n")
+par(mar = c(5, 4, 4, 2))
+```
+
